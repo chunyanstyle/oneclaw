@@ -23,10 +23,6 @@ export type SidebarProps = {
   feedbackActive: boolean;
   feedbackHasReply: boolean;
   onOpenFeedback: () => void;
-  updateStatus: "hidden" | "available" | "downloading";
-  updateVersion: string | null;
-  updatePercent: number | null;
-  updateShowBadge: boolean;
   // 当前 webbridge 模式但浏览器扩展未启用 → 显示「连接你的常用浏览器」pill
   // 用户在浏览器外部启用扩展 OneClaw 拿不到事件，所以 pill 改成可点击：
   // 点一次重跑 needs-repair；扩展已启用就 pill 消失，否则保持显示
@@ -48,7 +44,6 @@ export type SidebarProps = {
   onOpenWebUI: () => void;
   onOpenDocs: () => void;
   errors: string[];
-  onApplyUpdate: () => void;
   onReconnect: () => void;
 };
 
@@ -107,14 +102,6 @@ export function renderSidebar(props: SidebarProps) {
       <path d="M21 3v5h-5"></path>
     </svg>
   `;
-  const showUpdateAction = props.updateStatus !== "hidden";
-  const updateLabel = props.updateStatus === "downloading"
-    ? t("sidebar.updateDownloading").replace(
-        "{percent}",
-        String(Math.max(0, Math.min(100, Math.round(props.updatePercent ?? 0)))),
-      )
-    : t("sidebar.updateReady");
-
   return html`
     <aside class="oneclaw-sidebar">
       <div class="oneclaw-sidebar__brand">
@@ -225,26 +212,6 @@ export function renderSidebar(props: SidebarProps) {
                 </button>
               `;
             })()
-          : nothing}
-        ${showUpdateAction
-          ? html`
-              <button
-                class="oneclaw-sidebar__item oneclaw-sidebar__item--update ${props.updateStatus === "downloading"
-                  ? "is-loading"
-                  : ""}"
-                type="button"
-                @click=${props.onApplyUpdate}
-                ?disabled=${props.updateStatus === "downloading"}
-              >
-                <span class="oneclaw-sidebar__icon">
-                  ${props.updateStatus === "downloading" ? icons.loader : icons.zap}
-                </span>
-                <span class="oneclaw-sidebar__label">${updateLabel}</span>
-                ${props.updateShowBadge
-                  ? html`<span class="oneclaw-sidebar__update-dot" aria-hidden="true"></span>`
-                  : nothing}
-              </button>
-            `
           : nothing}
         <button
           class="oneclaw-sidebar__item oneclaw-sidebar__item--settings ${props.settingsActive

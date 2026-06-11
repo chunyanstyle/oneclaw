@@ -208,13 +208,6 @@ export interface AboutInfo {
   openClawVersion: string;
 }
 
-export interface UpdateState {
-  status: "hidden" | "available" | "downloading";
-  version?: string | null;
-  percent?: number | null;
-  showBadge?: boolean;
-}
-
 export interface NavigatePayload {
   view: "settings" | "setup" | "chat";
   settingsTab?: string | null;
@@ -345,11 +338,6 @@ interface OneClawBridgeExtended {
       startGateway?: () => void;
       stopGateway?: () => void;
       getGatewayPort?: () => Promise<number>;
-      // Update
-      getUpdateState?: () => Promise<any>;
-      checkForUpdates?: () => void;
-      downloadAndInstallUpdate?: () => Promise<any>;
-      onUpdateState?: (cb: (state: any) => void) => () => void;
       // Navigation
       onNavigate?: (cb: (payload: any) => void) => () => void;
       onSettingsNavigate?: (cb: (payload: any) => void) => () => void;
@@ -739,26 +727,6 @@ export function stopGateway(): void {
 
 export function getGatewayPort(): Promise<number> {
   return oc().getGatewayPort() as Promise<number>;
-}
-
-// ---------------------------------------------------------------------------
-// Update (4)
-// ---------------------------------------------------------------------------
-
-export function getUpdateState(): Promise<UpdateState> {
-  return oc().getUpdateState() as Promise<UpdateState>;
-}
-
-export function checkForUpdates(): void {
-  oc().checkForUpdates();
-}
-
-export function downloadAndInstallUpdate(): Promise<void> {
-  return oc().downloadAndInstallUpdate() as Promise<void>;
-}
-
-export function onUpdateState(cb: (state: UpdateState) => void): () => void {
-  return oc().onUpdateState(cb);
 }
 
 // ---------------------------------------------------------------------------

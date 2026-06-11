@@ -8,11 +8,6 @@ contextBridge.exposeInMainWorld("oneclaw", {
   stopGateway: () => ipcRenderer.send("gateway:stop"),
   getGatewayState: () => ipcRenderer.invoke("gateway:state"),
 
-  // 自动更新
-  checkForUpdates: () => ipcRenderer.send("app:check-updates"),
-  getUpdateState: () => ipcRenderer.invoke("app:get-update-state"),
-  downloadAndInstallUpdate: () => ipcRenderer.invoke("app:download-and-install-update"),
-
   // Setup 相关
   verifyKey: (params: Record<string, unknown>) =>
     ipcRenderer.invoke("setup:verify-key", params),
@@ -179,10 +174,6 @@ contextBridge.exposeInMainWorld("oneclaw", {
   readClipboardFilePaths: () =>
     ipcRenderer.invoke("clipboard:read-file-paths") as Promise<string[]>,
 
-  // Release Notes
-  getReleaseNotes: () => ipcRenderer.invoke("app:get-release-notes"),
-  dismissReleaseNotes: (version: string) => ipcRenderer.invoke("app:dismiss-release-notes", version),
-
   // Chat UI 侧边栏操作
   quit: () => ipcRenderer.send("app:quit"),
   reportSetupViewState: (active: boolean) => ipcRenderer.send("app:setup-view-state", active),
@@ -251,28 +242,6 @@ contextBridge.exposeInMainWorld("oneclaw", {
     };
     ipcRenderer.on("app:navigate", listener);
     return () => ipcRenderer.removeListener("app:navigate", listener);
-  },
-  onUpdateState: (
-    cb: (payload: {
-      status: "hidden" | "available" | "downloading";
-      version: string | null;
-      percent: number | null;
-      showBadge: boolean;
-    }) => void,
-  ) => {
-    const listener = (
-      _event: Electron.IpcRendererEvent,
-      payload: {
-        status: "hidden" | "available" | "downloading";
-        version: string | null;
-        percent: number | null;
-        showBadge: boolean;
-      },
-    ) => {
-      cb(payload);
-    };
-    ipcRenderer.on("app:update-state", listener);
-    return () => ipcRenderer.removeListener("app:update-state", listener);
   },
 });
 

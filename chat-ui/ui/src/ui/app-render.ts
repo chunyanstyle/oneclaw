@@ -19,7 +19,6 @@ import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.t
 import { renderRestartGatewayDialog } from "./views/restart-gateway-dialog.ts";
 import { renderSharePrompt } from "./views/share-prompt.ts";
 import { renderWebbridgePillModal } from "./views/webbridge-pill-modal.ts";
-import { renderReleaseNotesModal } from "./views/release-notes-modal.ts";
 import { renderSetupView } from "./views/setup/setup-view.ts";
 import { renderSettingsView, cleanupSettingsView } from "./views/settings/settings-view.ts";
 import {
@@ -60,7 +59,6 @@ declare global {
       openWebUI?: () => void;
       openExternal?: (url: string) => unknown;
       getGatewayPort?: () => Promise<number>;
-      downloadAndInstallUpdate?: () => Promise<boolean>;
       skillStoreList?: (params?: Record<string, unknown>) => Promise<any>;
       skillStoreSearch?: (params?: Record<string, unknown>) => Promise<any>;
       skillStoreDetail?: (params?: Record<string, unknown>) => Promise<any>;
@@ -1509,19 +1507,6 @@ async function handleOpenWebUI(state: AppViewState) {
   }
 }
 
-// 仅在存在可用更新时触发下载与安装，避免误触发无效 IPC 调用。
-async function handleApplyUpdate(state: AppViewState) {
-  const current = state.updateBannerState;
-  if (current.status !== "available") {
-    return;
-  }
-  try {
-    await window.oneclaw?.downloadAndInstallUpdate?.();
-  } catch {
-    // ignore bridge failure; main process会记录日志并回退状态
-  }
-}
-
 // Settings iframe bridge + renderer removed: Settings is now a native Lit component (renderSettingsView)
 
 // 文件拖拽/粘贴事件桥接
@@ -1564,7 +1549,6 @@ export function renderApp(state: AppViewState) {
   const workspaceActive = oneclawView === "workspace";
   const cronActive = oneclawView === "cron";
   const feedbackActive = oneclawView === "feedback";
-  const updateBannerState = state.updateBannerState;
 
   return html`
     <div
@@ -1587,10 +1571,6 @@ export function renderApp(state: AppViewState) {
             // 全局红点派生自当前会话内的未读 thread 集合；点开 thread 自动清除
             feedbackHasReply: feedbackPanelState.unreadThreadIds.length > 0,
             onOpenFeedback: () => openFeedbackView(state),
-            updateStatus: updateBannerState.status,
-            updateVersion: updateBannerState.version,
-            updatePercent: updateBannerState.percent,
-            updateShowBadge: updateBannerState.showBadge,
             webbridgeRepairVisible: state.webbridgeRepairVisible,
             webbridgeRepairBrowserName: state.webbridgeRepairBrowserName,
             webbridgeRepairChecking: state.webbridgeRepairChecking,
@@ -1629,7 +1609,6 @@ export function renderApp(state: AppViewState) {
                 window.open("https://oneclaw.cn/docs", "_blank");
               }
             },
-            onApplyUpdate: () => void handleApplyUpdate(state),
           })}
 
       <div class="oneclaw-main">
@@ -2012,7 +1991,6 @@ export function renderApp(state: AppViewState) {
       ${renderGatewayUrlConfirmation(state)}
       ${renderRestartGatewayDialog(state)}
       ${renderSharePrompt(state)}
-      ${renderReleaseNotesModal(state)}
       ${renderWebbridgePillModal(state)}
       ${renderFeedbackDialog(feedbackState, {
         onClose: () => {

@@ -115,27 +115,12 @@ type SharePromptStore = {
   shownVersions: number[];
 };
 
-type OneClawUpdateState = {
-  status: "hidden" | "available" | "downloading";
-  version: string | null;
-  percent: number | null;
-  showBadge: boolean;
-};
-
-type ReleaseNotesData = {
-  currentVersion: string;
-  entries: Array<{ version: string; notes: { zh?: string; en?: string } }>;
-  locale: string;
-};
-
 type OneClawNavigatePayload = IpcNavigatePayload;
 
 type OneClawBridge = {
   onNavigate?: (cb: (payload: OneClawNavigatePayload) => void) => (() => void) | void;
   onGatewayReady?: (cb: () => void) => (() => void) | void;
   reportSetupViewState?: (active: boolean) => void;
-  onUpdateState?: (cb: (payload: OneClawUpdateState) => void) => (() => void) | void;
-  getUpdateState?: () => Promise<OneClawUpdateState>;
   // sidebar 「连接你的常用浏览器」pill 用：纯查询当前是否需要修复
   settingsWebbridgeNeedsRepair?: () => Promise<{
     success: boolean;
@@ -158,8 +143,6 @@ type OneClawBridge = {
   }>;
   // setup-task 后台装完扩展、settings 修复完成时由主进程广播——chat-ui 据此重查 needs-repair
   onWebbridgeStateChanged?: (cb: () => void) => (() => void) | void;
-  getReleaseNotes?: () => Promise<ReleaseNotesData | null>;
-  dismissReleaseNotes?: (version: string) => Promise<void>;
 };
 
 const SHARE_PROMPT_STORE_KEY = "openclaw.share.prompt.v1";
@@ -377,11 +360,8 @@ export class OpenClawApp extends LitElement {
     sharePromptSubtitle: { state: true },
     sharePromptText: { state: true },
     sharePromptVersion: { state: true },
-    updateBannerState: { state: true },
     settingsTabHint: { state: true },
     settingsNotice: { state: true },
-    showReleaseNotesModal: { state: true },
-    releaseNotesData: { state: true },
     webbridgeRepairVisible: { state: true },
     webbridgeRepairBrowserName: { state: true },
     webbridgeRepairChecking: { state: true },
@@ -656,16 +636,8 @@ export class OpenClawApp extends LitElement {
   sharePromptSubtitle = t("sharePrompt.subtitle");
   sharePromptText = "";
   sharePromptVersion: number | null = null;
-  updateBannerState: OneClawUpdateState = {
-    status: "hidden",
-    version: null,
-    percent: null,
-    showBadge: false,
-  };
   settingsTabHint: string | null = null;
   settingsNotice: string | null = null;
-  showReleaseNotesModal = false;
-  releaseNotesData: ReleaseNotesData | null = null;
   // 当前是 webbridge 模式 + 浏览器扩展未启用 → 主窗左侧栏显示「连接你的常用浏览器」pill
   // 用户点 pill → 重跑 needs-repair；扩展已启用则 pill 消失，否则保持
   // checking 期间图标换成转圈 loader
@@ -699,7 +671,6 @@ export class OpenClawApp extends LitElement {
   private themeMediaHandler: ((event: MediaQueryListEvent) => void) | null = null;
   private topbarObserver: ResizeObserver | null = null;
   private appNavigateCleanup: (() => void) | null = null;
-  private updateStateCleanup: (() => void) | null = null;
   private gatewayReadyCleanup: (() => void) | null = null;
   private webbridgeStateCleanup: (() => void) | null = null;
 
@@ -711,25 +682,12 @@ export class OpenClawApp extends LitElement {
     super.connectedCallback();
     handleConnected(this as unknown as Parameters<typeof handleConnected>[0]);
     this.bindAppNavigation();
-    this.bindUpdateState();
     this.bindGatewayReady();
     this.bindWebbridgeStateChanged();
     this.bindWebbridgeRepairPoll();
-    this.fetchReleaseNotes();
     // 启动时常驻 SSE 订阅 + 拉取 thread 列表（计算"过去未读"），
     // 让反馈入口红点在任意视图都能反映服务端推送的新消息。
     initFeedbackBackground(this as unknown as Parameters<typeof initFeedbackBackground>[0]);
-  }
-
-  // 首屏拉取更新日志，有未展示的条目时弹出 modal。
-  private fetchReleaseNotes() {
-    const bridge = this.getOneClawBridge();
-    void bridge?.getReleaseNotes?.().then((data) => {
-      if (data && Array.isArray(data.entries) && data.entries.length > 0) {
-        this.releaseNotesData = data;
-        this.showReleaseNotesModal = true;
-      }
-    }).catch(() => {});
   }
 
   protected firstUpdated() {
@@ -739,8 +697,6 @@ export class OpenClawApp extends LitElement {
   disconnectedCallback() {
     this.appNavigateCleanup?.();
     this.appNavigateCleanup = null;
-    this.updateStateCleanup?.();
-    this.updateStateCleanup = null;
     this.gatewayReadyCleanup?.();
     this.gatewayReadyCleanup = null;
     this.webbridgeStateCleanup?.();
@@ -807,43 +763,6 @@ export class OpenClawApp extends LitElement {
   // 统一读取 preload 暴露的 bridge，避免在多个方法里重复类型断言。
   private getOneClawBridge(): OneClawBridge | undefined {
     return (window as unknown as { oneclaw?: OneClawBridge }).oneclaw;
-  }
-
-  // 规范化更新状态 payload，保证渲染层只消费合法值。
-  private applyUpdateBannerState(payload: OneClawUpdateState | null | undefined) {
-    const nextStatus = payload?.status;
-    if (nextStatus !== "hidden" && nextStatus !== "available" && nextStatus !== "downloading") {
-      return;
-    }
-    this.updateBannerState = {
-      status: nextStatus,
-      version: typeof payload.version === "string" && payload.version.trim()
-        ? payload.version.trim()
-        : null,
-      percent: typeof payload.percent === "number" && Number.isFinite(payload.percent)
-        ? Math.max(0, Math.min(100, payload.percent))
-        : null,
-      showBadge: Boolean(payload.showBadge),
-    };
-  }
-
-  // 订阅主进程更新状态事件，并在首屏主动拉取一次当前状态。
-  private bindUpdateState() {
-    if (this.updateStateCleanup) {
-      return;
-    }
-    const bridge = this.getOneClawBridge();
-    if (bridge?.onUpdateState) {
-      const unsubscribe = bridge.onUpdateState((payload) => this.applyUpdateBannerState(payload));
-      this.updateStateCleanup = typeof unsubscribe === "function" ? unsubscribe : null;
-    }
-    if (bridge?.getUpdateState) {
-      void bridge.getUpdateState()
-        .then((payload) => this.applyUpdateBannerState(payload))
-        .catch(() => {
-          // ignore preload bridge fetch errors
-        });
-    }
   }
 
   // 查 settings:webbridge-needs-repair → 控制左侧栏 pill 可见性 + 默认浏览器名（hover 用）
@@ -1339,16 +1258,6 @@ export class OpenClawApp extends LitElement {
     this.sharePromptCopied = false;
     this.sharePromptCopyError = null;
     this.sharePromptVersion = null;
-  }
-
-  // 关闭更新日志弹窗，并记录当前版本为已展示。
-  dismissReleaseNotes() {
-    this.showReleaseNotesModal = false;
-    const version = this.releaseNotesData?.currentVersion;
-    if (version) {
-      const bridge = this.getOneClawBridge();
-      void bridge?.dismissReleaseNotes?.(version).catch(() => {});
-    }
   }
 
   async handleSharePromptCopy() {

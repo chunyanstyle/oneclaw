@@ -27,7 +27,6 @@ interface TrayOptions {
   onStopGateway: () => void;
   onOpenSettings: () => void;
   onQuit: () => void;
-  onCheckUpdates: () => void;
 }
 
 // 托盘菜单国际化
@@ -41,7 +40,6 @@ type TrayStrings = {
   startGateway: string;
   stopGateway: string;
   settings: string;
-  checkUpdates: string;
   quit: string;
 };
 
@@ -56,7 +54,6 @@ const I18N: Record<string, TrayStrings> = {
     startGateway: "Start Gateway",
     stopGateway: "Stop Gateway",
     settings: "Settings",
-    checkUpdates: "Check for Updates",
     quit: "Quit OneClaw",
   },
   zh: {
@@ -69,7 +66,6 @@ const I18N: Record<string, TrayStrings> = {
     startGateway: "启动 Gateway",
     stopGateway: "停止 Gateway",
     settings: "设置",
-    checkUpdates: "检查更新",
     quit: "退出 OneClaw",
   },
 };
@@ -128,7 +124,7 @@ export class TrayManager {
   updateMenu(): void {
     if (!this.tray || !this.opts) return;
 
-    const { windowManager, gateway, onRestartGateway, onStartGateway, onStopGateway, onOpenSettings, onQuit, onCheckUpdates } = this.opts;
+    const { windowManager, gateway, onRestartGateway, onStartGateway, onStopGateway, onOpenSettings, onQuit } = this.opts;
     const t = getTrayStrings();
     const state = gateway.getState();
     const inTransition = state === "starting" || state === "stopping";
@@ -157,7 +153,6 @@ export class TrayManager {
       ...(showStop ? [{ label: t.stopGateway, enabled: state === "running", click: onStopGateway }] : []),
       { type: "separator" },
       { label: t.settings, click: onOpenSettings },
-      { label: t.checkUpdates, click: onCheckUpdates },
       { type: "separator" },
       { label: t.quit, click: onQuit },
     ]);

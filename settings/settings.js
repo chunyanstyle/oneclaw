@@ -4953,60 +4953,10 @@
         applyChPairingStateFromPush(payload);
       });
     }
-
-    // About — 检查更新按钮（用 _updateMode 区分当前按钮行为）
-    var aboutCheckBtn = document.getElementById("aboutCheckUpdate");
-    if (aboutCheckBtn) {
-      aboutCheckBtn.addEventListener("click", function () {
-        if (_updateMode === "download") {
-          window.oneclaw.downloadAndInstallUpdate();
-          startUpdatePoll();
-        } else {
-          window.oneclaw.checkForUpdates();
-          aboutCheckBtn.textContent = t("about.checking");
-          aboutCheckBtn.disabled = true;
-          startUpdatePoll();
-        }
-      });
-    }
-
-    // 订阅更新状态推送
-    if (window.oneclaw && window.oneclaw.onUpdateState) {
-      window.oneclaw.onUpdateState(function (state) {
-        renderUpdateStatus(state);
-      });
-    }
   }
 
   // ── About Tab ──
 
-  // 更新按钮当前行为模式: "check" = 检查更新, "download" = 安装并重启
-  var _updateMode = "check";
-  var _updatePollTimer = null;
-
-  // 轮询更新状态（iframe 中 onUpdateState 推送可能不可靠，用主动轮询兜底）
-  function startUpdatePoll() {
-    stopUpdatePoll();
-    _updatePollTimer = setInterval(function () {
-      if (!window.oneclaw || !window.oneclaw.getUpdateState) return;
-      window.oneclaw.getUpdateState().then(function (state) {
-        renderUpdateStatus(state);
-        // 终态停止轮询（hidden = 无更新/已完成，但 downloading 继续轮询）
-        if (state.status === "hidden") {
-          stopUpdatePoll();
-        }
-      }).catch(function () {});
-    }, 500);
-  }
-
-  function stopUpdatePoll() {
-    if (_updatePollTimer) {
-      clearInterval(_updatePollTimer);
-      _updatePollTimer = null;
-    }
-  }
-
-  // 加载版本信息和更新状态
   async function loadAboutInfo() {
     try {
       var info = await window.oneclaw.settingsGetAboutInfo();
@@ -5014,54 +4964,6 @@
       document.getElementById("aboutOpenClawVersion").textContent = info.openClawVersion;
     } catch (e) {
       console.error("Failed to load about info:", e);
-    }
-    try {
-      var state = await window.oneclaw.getUpdateState();
-      renderUpdateStatus(state);
-    } catch (e) {}
-  }
-
-  // 根据更新状态渲染按钮和提示
-  function renderUpdateStatus(state) {
-    var statusEl = document.getElementById("aboutUpdateStatus");
-    var btnEl = document.getElementById("aboutCheckUpdate");
-    if (!statusEl || !btnEl) return;
-
-    switch (state.status) {
-      case "hidden":
-        statusEl.classList.add("hidden");
-        btnEl.textContent = t("about.checkUpdate");
-        btnEl.disabled = false;
-        _updateMode = "check";
-        break;
-      case "available":
-        statusEl.classList.remove("hidden");
-        statusEl.textContent = t("about.updateAvailable") + " " + (state.version || "");
-        btnEl.textContent = t("about.installRestart");
-        btnEl.disabled = false;
-        _updateMode = "download";
-        break;
-      case "downloading":
-        statusEl.classList.remove("hidden");
-        statusEl.textContent = t("about.downloading") + " " + Math.round(state.percent || 0) + "%";
-        btnEl.textContent = t("about.downloading") + "...";
-        btnEl.disabled = true;
-        _updateMode = "download";
-        break;
-      case "failed":
-        statusEl.classList.remove("hidden");
-        statusEl.textContent = t("about.updateFailed");
-        btnEl.textContent = t("about.checkUpdate");
-        btnEl.disabled = false;
-        _updateMode = "check";
-        stopUpdatePoll();
-        break;
-      default:
-        statusEl.classList.add("hidden");
-        btnEl.textContent = t("about.checkUpdate");
-        btnEl.disabled = false;
-        _updateMode = "check";
-        break;
     }
   }
 

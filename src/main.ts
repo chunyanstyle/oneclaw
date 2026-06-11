@@ -10,17 +10,6 @@ import { registerSettingsIpc } from "./settings-ipc";
 import { registerSkillStoreIpc } from "./skill-store";
 import { registerWorkspaceIpc } from "./workspace-ipc";
 import { registerFeedbackIpc, stopFeedbackSse } from "./feedback-ipc";
-import {
-  setupAutoUpdater,
-  checkForUpdates,
-  downloadAndInstallUpdate,
-  getUpdateBannerState,
-  startAutoCheckSchedule,
-  stopAutoCheckSchedule,
-  setBeforeQuitForInstallCallback,
-  setProgressCallback,
-  setUpdateBannerStateCallback,
-} from "./auto-updater";
 import { isSetupComplete, resolveGatewayPort, resolveGatewayLogPath } from "./constants";
 import { resolveGatewayAuthToken } from "./gateway-auth";
 import {
@@ -562,9 +551,6 @@ ipcMain.on("gateway:start", () => requestGatewayStart("ipc:start"));
 ipcMain.on("gateway:stop", () => requestGatewayStop("ipc:stop"));
 ipcMain.handle("gateway:state", () => gateway.getState());
 ipcMain.on("app:quit", () => app.quit());
-ipcMain.on("app:check-updates", () => checkForUpdates(true));
-ipcMain.handle("app:get-update-state", () => getUpdateBannerState());
-ipcMain.handle("app:download-and-install-update", () => downloadAndInstallUpdate());
 ipcMain.handle("app:open-external", (_e, url: string) => shell.openExternal(appendChannelUtm(url)));
 ipcMain.handle("app:open-path", (_e, filePath: string) => shell.openPath(filePath));
 
@@ -613,75 +599,6 @@ ipcMain.handle("clipboard:read-file-paths", () => {
   }
 });
 
-// ── Release Notes：读取打包的 changelog 并按版本过滤 ──
-
-// 版本号数值化比较（YYYY.MMDD.N 格式不适合字符串比较）
-function compareVersions(a: string, b: string): number {
-  const pa = a.split(".").map((s) => parseInt(s, 10) || 0);
-  const pb = b.split(".").map((s) => parseInt(s, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-
-ipcMain.handle("app:get-release-notes", () => {
-  try {
-    const notesPath = path.join(app.getAppPath(), "release-notes.json");
-    const raw = fs.readFileSync(notesPath, "utf-8");
-    const allEntries: Array<{ version: string; notes: { zh?: string; en?: string } }> = JSON.parse(raw);
-    if (!Array.isArray(allEntries)) return null;
-
-    const currentVersion = app.getVersion();
-    const config = readOneclawConfig();
-    const lastShown = config?.lastShownReleaseNotesVersion;
-
-    // 首次安装不弹更新日志，静默标记当前版本
-    if (!lastShown) {
-      if (config) {
-        config.lastShownReleaseNotesVersion = currentVersion;
-        writeOneclawConfig(config);
-      }
-      return { currentVersion, entries: [], locale: app.getLocale() };
-    }
-
-    // 过滤出 lastShown < version <= currentVersion 的条目
-    const entries = allEntries.filter((entry) => {
-      if (!entry?.version) return false;
-      if (lastShown && compareVersions(entry.version, lastShown) <= 0) return false;
-      if (compareVersions(entry.version, currentVersion) > 0) return false;
-      return true;
-    });
-
-    // 按版本降序排列（最新在前）
-    entries.sort((a, b) => compareVersions(b.version, a.version));
-
-    return {
-      currentVersion,
-      entries,
-      locale: app.getLocale(),
-    };
-  } catch (err: any) {
-    log.error(`读取 release-notes.json 失败: ${err?.message ?? err}`);
-    return null;
-  }
-});
-
-ipcMain.handle("app:dismiss-release-notes", (_e, version: string) => {
-  // 参数校验：version 必须是非空字符串
-  if (typeof version !== "string" || !version.trim()) return;
-  try {
-    // 配置不存在时直接跳过，避免用空对象覆盖已有字段
-    const config = readOneclawConfig();
-    if (!config) return;
-    config.lastShownReleaseNotesVersion = version;
-    writeOneclawConfig(config);
-  } catch (err: any) {
-    log.error(`写入 lastShownReleaseNotesVersion 失败: ${err?.message ?? err}`);
-  }
-});
-
 // Chat UI 侧边栏 IPC
 ipcMain.on("app:open-settings", () => {
   openSettingsInMainWindow().catch((err) => {
@@ -721,7 +638,6 @@ registerFeedbackIpc({
 async function quit(): Promise<void> {
   stopTokenRefresh();
   await stopAuthProxy();
-  stopAutoCheckSchedule();
   analytics.track("app_closed");
   await analytics.shutdown();
   windowManager.destroy();
@@ -822,23 +738,6 @@ app.whenReady().then(async () => {
   }
   analytics.init();
   analytics.track("app_launched");
-  setupAutoUpdater();
-  // 自动更新状态变化后推送给当前主窗口，驱动侧栏“重启更新”按钮。
-  setUpdateBannerStateCallback((state) => {
-    windowManager.pushUpdateBannerState(state);
-  });
-  startAutoCheckSchedule();
-
-  // 更新安装前先放行窗口关闭，避免托盘“隐藏而不退出”拦截 quitAndInstall。
-  setBeforeQuitForInstallCallback(() => {
-    stopAutoCheckSchedule();
-    windowManager.prepareForAppQuit();
-  });
-
-  // 下载进度 → 更新托盘 tooltip
-  setProgressCallback((pct) => {
-    tray.setTooltip(pct != null ? `OneClaw — 下载更新 ${pct.toFixed(0)}%` : "OneClaw");
-  });
 
   tray.create({
     windowManager,
@@ -852,7 +751,6 @@ app.whenReady().then(async () => {
       });
     },
     onQuit: quit,
-    onCheckUpdates: () => checkForUpdates(true),
   });
 
   const configHealth = inspectUserConfigHealth();

@@ -105,11 +105,47 @@ function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-// 递归删除目录
-function rmDir(dir) {
-  if (fs.existsSync(dir)) {
-    fs.rmSync(dir, { recursive: true, force: true });
+function sleepSync(ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    // busy-wait：构建脚本里短延迟，避免引入额外依赖
   }
+}
+
+// 递归删除目录（Windows 上 node_modules 树易 ENOTEMPTY，带重试与 cmd 回退）
+function rmDir(dir) {
+  if (!fs.existsSync(dir)) return;
+
+  const rmOpts =
+    process.platform === "win32"
+      ? { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }
+      : { recursive: true, force: true };
+  const attempts = process.platform === "win32" ? 6 : 1;
+  let lastErr;
+
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      fs.rmSync(dir, rmOpts);
+      return;
+    } catch (err) {
+      lastErr = err;
+      const retryable = ["ENOTEMPTY", "EBUSY", "EPERM", "EACCES", "ENOTDIR"].includes(err?.code);
+      if (!retryable || i === attempts) break;
+      sleepSync(150 * i);
+    }
+  }
+
+  if (process.platform === "win32") {
+    try {
+      const quoted = `"${dir.replace(/"/g, '\\"')}"`;
+      execSync(`cmd /c rmdir /s /q ${quoted}`, { stdio: "pipe" });
+      if (!fs.existsSync(dir)) return;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  throw lastErr;
 }
 
 // 安全删除单个文件（忽略不存在或权限瞬时错误）
@@ -353,6 +389,28 @@ function createExtractTmpDir(cacheDir, targetId) {
   rmDir(tmpDir);
   ensureDir(tmpDir);
   return tmpDir;
+}
+
+// Windows 10+ 自带 bsdtar，不支持 GNU 的 --force-local；Git Bash 的 GNU tar 才需要。
+let tarForceLocalSupported;
+function tarSupportsForceLocal() {
+  if (process.platform !== "win32") return false;
+  if (tarForceLocalSupported !== undefined) return tarForceLocalSupported;
+  try {
+    const help = execSync("tar --help", { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    tarForceLocalSupported = /\bforce-local\b/.test(help);
+  } catch {
+    tarForceLocalSupported = false;
+  }
+  return tarForceLocalSupported;
+}
+
+function extractTarGz(archivePath, extractDir) {
+  const isWin = process.platform === "win32";
+  const forceLocal = isWin && tarSupportsForceLocal() ? " --force-local" : "";
+  const archive = isWin ? archivePath.replace(/\\/g, "/") : archivePath;
+  const dest = isWin ? extractDir.replace(/\\/g, "/") : extractDir;
+  execSync(`tar${forceLocal} -xzf "${archive}" -C "${dest}"`, { stdio: "inherit" });
 }
 
 // macOS: 从 tar.gz 中提取 node 二进制和 npm
@@ -1824,12 +1882,7 @@ async function bundlePlugin(plugin, gatewayDir, targetId, opts) {
   let extracted = false;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      // Windows: --force-local 防止冒号被当作远程主机分隔符；路径转正斜杠防止 GNU tar 解析失败
-      const isWin = process.platform === "win32";
-      const forceLocal = isWin ? " --force-local" : "";
-      const archivePath = isWin ? source.archivePath.replace(/\\/g, "/") : source.archivePath;
-      const extractDir = isWin ? tmpDir.replace(/\\/g, "/") : tmpDir;
-      execSync(`tar${forceLocal} -xzf "${archivePath}" -C "${extractDir}"`, { stdio: "inherit" });
+      extractTarGz(source.archivePath, tmpDir);
       extracted = true;
       break;
     } catch (err) {
@@ -2308,8 +2361,29 @@ async function packGatewayAsar(gatewayDir, targetBase, platform, arch) {
     log(`gateway.asar.unpacked: ${unpackedFiles} 个文件`);
   }
 
-  // 删除散文件目录
-  rmDir(gatewayDir);
+  // 删除散文件目录：先 rename 释放 gateway/ 路径，再带重试删除（Windows 上 asar 句柄释放较慢）
+  if (fs.existsSync(gatewayDir)) {
+    const trashDir = `${gatewayDir}.__trash_${process.pid}_${Date.now()}`;
+    if (process.platform === "win32") {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    try {
+      fs.renameSync(gatewayDir, trashDir);
+      rmDir(trashDir);
+    } catch (err) {
+      if (fs.existsSync(trashDir)) {
+        try {
+          rmDir(trashDir);
+        } catch {
+          die(
+            `删除 gateway/ 散文件目录失败（请手动删除 ${trashDir}）: ${err.message || String(err)}`
+          );
+        }
+      } else if (fs.existsSync(gatewayDir)) {
+        rmDir(gatewayDir);
+      }
+    }
+  }
   log("已删除 gateway/ 散文件目录");
 }
 
@@ -2329,7 +2403,7 @@ function verifyAsarContents(asarPath) {
   if (missing.length > 0) {
     die(`gateway.asar 缺少关键文件:\n${missing.map((f) => `  - ${f}`).join("\n")}`);
   }
-  log(`gateway.asar 关键文件校验通过 (${files.length} 个文件)`);
+  log(`gateway.asar 关键文件校验通过 (${files.size} 个文件)`);
 }
 
 // 递归统计文件数

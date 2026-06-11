@@ -4,7 +4,6 @@ import * as log from "./logger";
 import { buildChatUiEntryUrl } from "./chat-ui-entry-url";
 import { shouldHideWindowOnClose } from "./window-close-policy";
 import * as analytics from "./analytics";
-import type { UpdateBannerState } from "./update-banner-state";
 import {
   WINDOW_WIDTH,
   WINDOW_HEIGHT,
@@ -203,17 +202,9 @@ export class WindowManager {
     this.navigate({ view: "settings" });
   }
 
-  // 标记应用进入退出流程（例如手动退出/更新安装）
+  // 标记应用进入退出流程
   prepareForAppQuit(): void {
     this.allowAppQuit = true;
-  }
-
-  // 向渲染层广播更新侧栏状态（若窗口存在）。
-  pushUpdateBannerState(state: UpdateBannerState): void {
-    if (!this.win || this.win.isDestroyed()) {
-      return;
-    }
-    this.win.webContents.send("app:update-state", state);
   }
 
   // 销毁窗口（应用退出前调用）

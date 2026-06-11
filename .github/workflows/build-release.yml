@@ -107,7 +107,6 @@ jobs:
           path: |
             out/darwin-arm64/*.dmg
             out/darwin-arm64/*.zip
-            out/darwin-arm64/latest-mac.yml
 
   # ── macOS x64：签名 + 公证（在 arm64 runner 上交叉编译） ──
   build-mac-x64:
@@ -169,7 +168,6 @@ jobs:
           path: |
             out/darwin-x64/*.dmg
             out/darwin-x64/*.zip
-            out/darwin-x64/latest-mac.yml
 
   # ── Windows x64 ──
   build-win-x64:
@@ -212,7 +210,6 @@ jobs:
           retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
           path: |
             out/win32-x64/*.exe
-            out/win32-x64/latest.yml
 
   # ── Windows arm64 ──
   build-win-arm64:
@@ -254,9 +251,8 @@ jobs:
           retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
           path: |
             out/win32-arm64/*.exe
-            out/win32-arm64/latest.yml
 
-  # ── 合并 + 上传 TOS + 刷新 CDN + 创建 GitHub Release ──
+  # ── 收集产物 + 上传 TOS + 创建 GitHub Release ──
   release:
     if: github.event_name == 'push'  # 仅 tag 推送时发布，手动触发只构建不发布
     needs: [build-mac-arm64, build-mac-x64, build-win-x64, build-win-arm64]
@@ -291,54 +287,30 @@ jobs:
           name: win-arm64
           path: out/win32-arm64
 
-      # 安装 js-yaml（merge 脚本依赖）
-      - run: npm install js-yaml
-
-      # 合并多架构 yml + 收集产物
-      - name: 合并发布文件
-        run: node scripts/merge-release-yml.js
+      - name: 收集发布产物
+        run: |
+          mkdir -p out/release
+          for dir in darwin-arm64 darwin-x64 win32-x64 win32-arm64; do
+            for f in out/$dir/*.{dmg,zip,exe}; do
+              [ -f "$f" ] || continue
+              cp "$f" out/release/
+            done
+          done
+          ls -la out/release/
 
       - name: 二次清理 blockmap（release）
         run: find out -type f -name "*.blockmap" -delete
 
-      # 生成 dev 通道 yml（复用同一批二进制，仅文件名不同）
-      # electron-updater channel="dev" 会拉取 dev-mac.yml / dev.yml
-      # 客户端切换: ~/.openclaw/oneclaw.config.json 设置 "updateChannel": "dev"
-      - name: 生成 dev 通道 yml
-        run: |
-          for src in out/release/latest-mac.yml out/release/latest.yml; do
-            [ -f "$src" ] || continue
-            dst=$(echo "$src" | sed 's/latest/dev/')
-            cp "$src" "$dst"
-            echo "[dev] $(basename "$src") → $(basename "$dst")"
-          done
-
-      # 预上传到 TOS：二进制 + dev yml（不含 latest yml，生产通道由 publish-release 推送）
-      - name: 预上传产物到 TOS（二进制 + dev yml）
+      - name: 预上传产物到 TOS
         continue-on-error: true
         id: tos-upload
         timeout-minutes: 15
         run: |
           aws configure set default.s3.addressing_style virtual
-          aws s3 cp out/release/ "s3://$TOS_BUCKET/releases/" --recursive --endpoint-url "$TOS_ENDPOINT" --exclude "latest*.yml"
-          echo "产物预上传完成（二进制 + dev yml，不含 latest yml）"
-
-      # 刷新 dev 通道 CDN 缓存（dev 用户立即拉到新版本）
-      - name: 刷新 dev 通道 CDN 缓存
-        if: steps.tos-upload.outcome == 'success'
-        continue-on-error: true
-        run: |
-          node scripts/volcengine-cdn-refresh.js \
-            "https://oneclaw.cn/releases/dev-mac.yml" \
-            "https://oneclaw.cn/releases/dev.yml"
-          echo "dev 通道 CDN 缓存刷新已提交"
-
-      # dev yml 已上传 TOS + 刷新 CDN，从 release 目录移除，不打入 GitHub Release asset
-      - name: 移除 dev yml
-        run: rm -f out/release/dev-mac.yml out/release/dev.yml
+          aws s3 cp out/release/ "s3://$TOS_BUCKET/releases/" --recursive --endpoint-url "$TOS_ENDPOINT"
+          echo "产物预上传完成"
 
       # 创建 GitHub Release（草稿模式，手动确认后发布）
-      # 发布 Release 后由 publish-release.yml 上传 latest yml + 刷新 CDN
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
